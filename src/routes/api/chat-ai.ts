@@ -3068,10 +3068,12 @@ export const Route = createFileRoute("/api/chat-ai")({
                     ? "shipping_zone_not_covered"
                     : "shipping_zone_unknown",
                   available_zones: zoneNames,
-                  address_governorate: shippingMatch.addressGovernorate ?? null,
+                  address_governorate:
+                    shippingMatch.addressGovernorate ?? resolvedGovernorate ?? null,
                   message: shippingMatch.conflict
-                    ? `The order was NOT created: the merchant has NO recorded shipping rate for the customer's governorate (${shippingMatch.addressGovernorate}). The recorded zones are: ${zoneNames.join("، ")}. Never use another zone's price or delivery time for this address, and never invent one. Tell the customer in Egyptian Arabic that you are checking the shipping cost/time for their area and will confirm, and report it through request_info as a missing shipping fact. Do not say the order is confirmed.`
+                    ? `The order was NOT created: the store's registered shipping areas do NOT include the customer's governorate (${shippingMatch.addressGovernorate ?? resolvedGovernorate ?? "غير محددة"}). The registered areas are the complete recorded set: ${zoneNames.join("، ")}. This is a recorded fact, so the absence IS the answer: do NOT promise to check, do NOT say you will get back to them, and do NOT report this through request_info — nothing is missing from the owner. Tell the customer plainly and politely in Egyptian Arabic that shipping to their governorate is not available right now, name the areas the store does deliver to, and ask whether they have a delivery address inside one of those areas. If they give one, call create_order again with it. Never use another area's price or delivery time, never invent one, and never say the order is confirmed.`
                     : "The order was NOT created because the shipping zone could not be inferred from the address or from anything the customer said. Ask the customer in Egyptian Arabic which zone from the list they belong to, then call create_order again. Never guess a zone, and do not say anything about confirming the order.",
+
                 },
                 createdOrderNumber: null,
               };
