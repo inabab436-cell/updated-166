@@ -61,10 +61,7 @@ export async function resolveAddressGovernorate(
 
   if (!apiKey) return { governorate: null };
 
-  const context = safeSlice(
-    (extraContext ?? []).filter(Boolean).join("\n"),
-    1200,
-  );
+  const context = safeSlice((extraContext ?? []).filter(Boolean).join("\n"), 0, 1200);
 
   const prompt =
     "You are given a delivery address written in Egyptian Arabic (or a mix of Arabic and English).\n" +
@@ -76,7 +73,7 @@ export async function resolveAddressGovernorate(
     "\n- If the text does not identify any real Egyptian place (for example it is only a street number, only a person's name, or just \"مصر\"), answer with the single word: NONE\n" +
     "- Never guess a governorate just because it is common. Only answer when the named place really belongs to it.\n" +
     "- Output the governorate name or NONE only. No explanation, no punctuation.\n\n" +
-    `ADDRESS:\n${safeSlice(text, 800)}\n` +
+    `ADDRESS:\n${safeSlice(text, 0, 800)}\n` +
     (context ? `\nOTHER THINGS THE CUSTOMER SAID (context only):\n${context}\n` : "");
 
   try {
