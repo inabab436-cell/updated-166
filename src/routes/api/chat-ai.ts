@@ -3757,6 +3757,19 @@ export const Route = createFileRoute("/api/chat-ai")({
 
 
           const MAX_TOOL_ITERATIONS = 4;
+          // The free AI allowance is rate limited (HTTP 429). One short retry
+          // was not enough, so a busy moment made the whole turn fail and the
+          // customer got a bare "temporary error" instead of an answer.
+          const MAX_GATEWAY_RETRIES = 5;
+          const gatewayBackoffMs = (attempt: number, retryAfter?: string | null) => {
+            const secs = Number(retryAfter);
+            if (Number.isFinite(secs) && secs > 0) {
+              return Math.min(15_000, Math.ceil(secs * 1000) + 250);
+            }
+            const base = Math.min(8_000, 700 * 2 ** (attempt - 1));
+            return base + Math.floor(Math.random() * 400);
+          };
+
           // At most one "you claimed an addition without registering it"
           // correction per turn.
           let additionClaimCorrections = 0;
@@ -3821,9 +3834,9 @@ export const Route = createFileRoute("/api/chat-ai")({
               });
             } catch (e) {
               console.error("[chat-ai] AI gateway request aborted/failed", e);
-              if (gatewayRetries < 2) {
+              if (gatewayRetries < MAX_GATEWAY_RETRIES) {
                 gatewayRetries++;
-                await new Promise((r) => setTimeout(r, 900 * gatewayRetries));
+                await new Promise((r) => setTimeout(r, gatewayBackoffMs(gatewayRetries)));
                 iter--;
                 continue;
               }
@@ -3842,25 +3855,37 @@ export const Route = createFileRoute("/api/chat-ai")({
                 details: errText,
               });
               // Transient gateway failures (rate limit / upstream hiccup) must
-              // not kill a live conversation: back off briefly and retry the
-              // same request before giving up on this turn.
+              // not kill a live conversation. A 429 is the common one on the
+              // free allowance: honour the Retry-After the gateway sends,
+              // otherwise back off exponentially with jitter, and keep trying
+              // several times before giving up on this turn.
               if (
                 (aiRes.status === 429 || aiRes.status >= 500) &&
-                gatewayRetries < 2
+                gatewayRetries < MAX_GATEWAY_RETRIES
               ) {
                 gatewayRetries++;
-                await new Promise((r) => setTimeout(r, 900 * gatewayRetries));
+                const wait = gatewayBackoffMs(
+                  gatewayRetries,
+                  aiRes.headers.get("retry-after"),
+                );
+                await new Promise((r) => setTimeout(r, wait));
                 iter--;
                 continue;
               }
               await releaseRun?.();
               releaseRun = null;
               return respond(
-                { reply: "حصل خطأ مؤقت، من فضلك حاول مرة أخرى بعد قليل" },
+                {
+                  reply:
+                    aiRes.status === 429
+                      ? "الخدمة مزحومة شوية دلوقتي، من فضلك ابعت رسالتك تاني بعد لحظات وأنا معاك."
+                      : "حصل خطأ مؤقت، من فضلك حاول مرة أخرى بعد قليل",
+                },
                 200,
               );
 
             }
+
 
             const aiJson = await aiRes.json();
             const choiceMsg = aiJson?.choices?.[0]?.message;
