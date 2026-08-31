@@ -3043,8 +3043,12 @@ export const Route = createFileRoute("/api/chat-ai")({
             const { matchShippingZone } = await import("@/lib/order-input-validation");
             const shippingMatch = matchShippingZone(
               merchantData.shipping as any,
-              [address, ...customerTexts],
+              [
+                resolvedGovernorate ? `${address} ${resolvedGovernorate}` : address,
+                ...customerTexts,
+              ],
             );
+
             const shippingZone = shippingMatch.zone;
             const existingShipping = Number(latestConversationOrder?.shipping_cost);
             const shippingCost =
