@@ -2312,8 +2312,16 @@ export const Route = createFileRoute("/api/chat-ai")({
                     { stage: "verified" },
                   );
                 } else if (zoneMatch.conflict && !availabilityNote) {
-                  availabilityNote = `لا توجد تكلفة شحن مسجَّلة لمنطقة العميل (${zoneMatch.addressGovernorate ?? "غير محددة"}). عالج ذلك الآن قبل الانتقال لأي خطوة تالية، ولا تخترع سعراً أو مدة.`;
+                  const zoneNames = (merchantData.shipping ?? []).map((s: any) =>
+                    [s.country, s.region].filter(Boolean).join(" / "),
+                  );
+                  availabilityNote =
+                    `مناطق الشحن المسجَّلة عند المتجر لا تشمل محافظة العميل (${zoneMatch.addressGovernorate ?? "غير محددة"}). ` +
+                    `المناطق المسجَّلة هي المجموعة الكاملة: ${zoneNames.join("، ")}. ` +
+                    "دي حقيقة مسجَّلة، فغيابها هو الإجابة: متوعدش بمراجعة ومتسألش الإدارة. " +
+                    "قول للعميل بوضوح إن الشحن لمحافظته غير متاح حالياً، واذكر المناطق المتاحة، واسأله لو عنده عنوان في واحدة منها. ولا تخترع سعراً أو مدة.";
                 }
+
               }
             } catch (e) {
               console.error("[chat-ai] shipping zone state resolution skipped");
