@@ -2311,18 +2311,25 @@ export const Route = createFileRoute("/api/chat-ai")({
                     },
                     { stage: "verified" },
                   );
-                } else if (zoneMatch.conflict && !availabilityNote) {
-                  const zoneNames = (merchantData.shipping ?? []).map((s: any) =>
-                    [s.country, s.region].filter(Boolean).join(" / "),
-                  );
-                  availabilityNote =
-                    `مناطق الشحن المسجَّلة عند المتجر لا تشمل محافظة العميل (${zoneMatch.addressGovernorate ?? "غير محددة"}). ` +
-                    `المناطق المسجَّلة هي المجموعة الكاملة: ${zoneNames.join("، ")}. ` +
-                    "دي حقيقة مسجَّلة، فغيابها هو الإجابة: متوعدش بمراجعة ومتسألش الإدارة. " +
-                    "قول للعميل بوضوح إن الشحن لمحافظته غير متاح حالياً، واذكر المناطق المتاحة، واسأله لو عنده عنوان في واحدة منها. ولا تخترع سعراً أو مدة.";
+                } else {
+                  // The address no longer resolves to the zone we stored for the
+                  // PREVIOUS address (the customer changed area). Drop the stale
+                  // derived zone so nothing downstream keeps reasoning about it.
+                  const { clearOrderStateField } = await import("@/lib/order-state");
+                  orderState = clearOrderStateField(orderState, "shipping_zone");
+                  if (zoneMatch.conflict && !availabilityNote) {
+                    const zoneNames = (merchantData.shipping ?? []).map((s: any) =>
+                      [s.country, s.region].filter(Boolean).join(" / "),
+                    );
+                    availabilityNote =
+                      `مناطق الشحن المسجَّلة عند المتجر لا تشمل محافظة العميل (${zoneMatch.addressGovernorate ?? "غير محددة"}). ` +
+                      `المناطق المسجَّلة هي المجموعة الكاملة: ${zoneNames.join("، ")}. ` +
+                      "دي حقيقة مسجَّلة، فغيابها هو الإجابة: متوعدش بمراجعة ومتسألش الإدارة. " +
+                      "قول للعميل بوضوح إن الشحن لمحافظته غير متاح حالياً، واذكر المناطق المتاحة، واسأله لو عنده عنوان في واحدة منها. ولا تخترع سعراً أو مدة.";
+                  }
                 }
-
               }
+
             } catch (e) {
               console.error("[chat-ai] shipping zone state resolution skipped");
             }
