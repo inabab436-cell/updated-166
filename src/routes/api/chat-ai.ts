@@ -2669,11 +2669,37 @@ export const Route = createFileRoute("/api/chat-ai")({
                 });
               }
               const addressCheck = validateAddress(address);
-              if (!addressCheck.ok) {
+              const addressMissing = [...addressCheck.missing];
+              // The governorate list is a closed lookup, so a complete address
+              // naming a city/village/district that is not on that list came
+              // back as "المحافظة ناقصة" forever. Resolve it by meaning before
+              // asking the customer for something they already gave us.
+              if (addressMissing.includes("governorate")) {
+                try {
+                  const { resolveAddressGovernorate } = await import(
+                    "@/lib/address-governorate.server"
+                  );
+                  const resolved = await resolveAddressGovernorate(
+                    lovableApiKey,
+                    address,
+                    customerTexts,
+                  );
+                  if (resolved.governorate) {
+                    resolvedGovernorate = resolved.governorate;
+                    const idx = addressMissing.indexOf("governorate");
+                    if (idx >= 0) addressMissing.splice(idx, 1);
+                  }
+                } catch {
+                  // Fall back to asking the customer.
+                }
+              } else {
+                resolvedGovernorate = addressCheck.governorate ?? null;
+              }
+              if (addressMissing.length) {
                 const wanted: string[] = [];
-                if (addressCheck.missing.includes("governorate")) wanted.push("المحافظة");
-                if (addressCheck.missing.includes("area")) wanted.push("المنطقة أو الحي");
-                if (addressCheck.missing.includes("street_or_landmark"))
+                if (addressMissing.includes("governorate")) wanted.push("المحافظة");
+                if (addressMissing.includes("area")) wanted.push("المنطقة أو الحي");
+                if (addressMissing.includes("street_or_landmark"))
                   wanted.push("الشارع أو علامة مميزة واضحة توصّل للمكان");
                 problems.push({
                   field: "customer_address",
@@ -2683,6 +2709,7 @@ export const Route = createFileRoute("/api/chat-ai")({
                     "رقم العقار ورقم الشقة والعلامة المميزة اختيارية، متطلبهاش كشرط.",
                 });
               }
+
               if (problems.length) {
                 return {
                   result: {
