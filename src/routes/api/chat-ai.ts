@@ -2519,6 +2519,12 @@ export const Route = createFileRoute("/api/chat-ai")({
             const name = typeof args.customer_name === "string" ? args.customer_name.trim() : "";
             const phone = typeof args.customer_phone === "string" ? args.customer_phone.trim() : "";
             const address = typeof args.customer_address === "string" ? args.customer_address.trim() : "";
+            // The governorate this address really belongs to (deterministic
+            // detection first, semantic resolution as a fallback). Used for the
+            // shipping-zone match so a valid address is never treated as
+            // "governorate missing" or as an unknown zone.
+            let resolvedGovernorate: string | null = null;
+
             if (!name) missing.push("customer_name");
             if (!phone) missing.push("customer_phone");
             if (!address) missing.push("customer_address");
