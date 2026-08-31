@@ -273,3 +273,26 @@ export function renderOrderStateStages(state: OrderState): string[] {
   }
   return out;
 }
+
+/**
+ * Drops a stale field so a later run recomputes it from scratch.
+ *
+ * Needed because a derived field (today: `shipping_zone`) is only valid for the
+ * address it was derived from. When the customer CHANGES their address, the old
+ * derived value must not survive — otherwise the run keeps reasoning about the
+ * previous area while the address gate talks about the new one, which is how the
+ * flow ended up repeating "المحافظة ناقصة" and re-reciting the order forever.
+ *
+ * A `committed` field is immutable and is never cleared.
+ */
+export function clearOrderStateField(
+  state: OrderState,
+  field: OrderStateField,
+  now = new Date().toISOString(),
+): OrderState {
+  const prev = state.fields[field];
+  if (!prev || prev.stage === "committed") return state;
+  const fields = { ...state.fields };
+  delete fields[field];
+  return { ...state, fields, updated_at: now };
+}

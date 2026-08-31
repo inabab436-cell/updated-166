@@ -2311,10 +2311,25 @@ export const Route = createFileRoute("/api/chat-ai")({
                     },
                     { stage: "verified" },
                   );
-                } else if (zoneMatch.conflict && !availabilityNote) {
-                  availabilityNote = `لا توجد تكلفة شحن مسجَّلة لمنطقة العميل (${zoneMatch.addressGovernorate ?? "غير محددة"}). عالج ذلك الآن قبل الانتقال لأي خطوة تالية، ولا تخترع سعراً أو مدة.`;
+                } else {
+                  // The address no longer resolves to the zone we stored for the
+                  // PREVIOUS address (the customer changed area). Drop the stale
+                  // derived zone so nothing downstream keeps reasoning about it.
+                  const { clearOrderStateField } = await import("@/lib/order-state");
+                  orderState = clearOrderStateField(orderState, "shipping_zone");
+                  if (zoneMatch.conflict && !availabilityNote) {
+                    const zoneNames = (merchantData.shipping ?? []).map((s: any) =>
+                      [s.country, s.region].filter(Boolean).join(" / "),
+                    );
+                    availabilityNote =
+                      `مناطق الشحن المسجَّلة عند المتجر لا تشمل محافظة العميل (${zoneMatch.addressGovernorate ?? "غير محددة"}). ` +
+                      `المناطق المسجَّلة هي المجموعة الكاملة: ${zoneNames.join("، ")}. ` +
+                      "دي حقيقة مسجَّلة، فغيابها هو الإجابة: متوعدش بمراجعة ومتسألش الإدارة. " +
+                      "قول للعميل بوضوح إن الشحن لمحافظته غير متاح حالياً، واذكر المناطق المتاحة، واسأله لو عنده عنوان في واحدة منها. ولا تخترع سعراً أو مدة.";
+                  }
                 }
               }
+
             } catch (e) {
               console.error("[chat-ai] shipping zone state resolution skipped");
             }
@@ -2519,6 +2534,12 @@ export const Route = createFileRoute("/api/chat-ai")({
             const name = typeof args.customer_name === "string" ? args.customer_name.trim() : "";
             const phone = typeof args.customer_phone === "string" ? args.customer_phone.trim() : "";
             const address = typeof args.customer_address === "string" ? args.customer_address.trim() : "";
+            // The governorate this address really belongs to (deterministic
+            // detection first, semantic resolution as a fallback). Used for the
+            // shipping-zone match so a valid address is never treated as
+            // "governorate missing" or as an unknown zone.
+            let resolvedGovernorate: string | null = null;
+
             if (!name) missing.push("customer_name");
             if (!phone) missing.push("customer_phone");
             if (!address) missing.push("customer_address");
@@ -2669,11 +2690,37 @@ export const Route = createFileRoute("/api/chat-ai")({
                 });
               }
               const addressCheck = validateAddress(address);
-              if (!addressCheck.ok) {
+              const addressMissing = [...addressCheck.missing];
+              // The governorate list is a closed lookup, so a complete address
+              // naming a city/village/district that is not on that list came
+              // back as "المحافظة ناقصة" forever. Resolve it by meaning before
+              // asking the customer for something they already gave us.
+              if (addressMissing.includes("governorate")) {
+                try {
+                  const { resolveAddressGovernorate } = await import(
+                    "@/lib/address-governorate.server"
+                  );
+                  const resolved = await resolveAddressGovernorate(
+                    lovableApiKey,
+                    address,
+                    customerTexts,
+                  );
+                  if (resolved.governorate) {
+                    resolvedGovernorate = resolved.governorate;
+                    const idx = addressMissing.indexOf("governorate");
+                    if (idx >= 0) addressMissing.splice(idx, 1);
+                  }
+                } catch {
+                  // Fall back to asking the customer.
+                }
+              } else {
+                resolvedGovernorate = addressCheck.governorate ?? null;
+              }
+              if (addressMissing.length) {
                 const wanted: string[] = [];
-                if (addressCheck.missing.includes("governorate")) wanted.push("المحافظة");
-                if (addressCheck.missing.includes("area")) wanted.push("المنطقة أو الحي");
-                if (addressCheck.missing.includes("street_or_landmark"))
+                if (addressMissing.includes("governorate")) wanted.push("المحافظة");
+                if (addressMissing.includes("area")) wanted.push("المنطقة أو الحي");
+                if (addressMissing.includes("street_or_landmark"))
                   wanted.push("الشارع أو علامة مميزة واضحة توصّل للمكان");
                 problems.push({
                   field: "customer_address",
@@ -2683,6 +2730,7 @@ export const Route = createFileRoute("/api/chat-ai")({
                     "رقم العقار ورقم الشقة والعلامة المميزة اختيارية، متطلبهاش كشرط.",
                 });
               }
+
               if (problems.length) {
                 return {
                   result: {
@@ -3010,8 +3058,12 @@ export const Route = createFileRoute("/api/chat-ai")({
             const { matchShippingZone } = await import("@/lib/order-input-validation");
             const shippingMatch = matchShippingZone(
               merchantData.shipping as any,
-              [address, ...customerTexts],
+              [
+                resolvedGovernorate ? `${address} ${resolvedGovernorate}` : address,
+                ...customerTexts,
+              ],
             );
+
             const shippingZone = shippingMatch.zone;
             const existingShipping = Number(latestConversationOrder?.shipping_cost);
             const shippingCost =
@@ -3031,10 +3083,12 @@ export const Route = createFileRoute("/api/chat-ai")({
                     ? "shipping_zone_not_covered"
                     : "shipping_zone_unknown",
                   available_zones: zoneNames,
-                  address_governorate: shippingMatch.addressGovernorate ?? null,
+                  address_governorate:
+                    shippingMatch.addressGovernorate ?? resolvedGovernorate ?? null,
                   message: shippingMatch.conflict
-                    ? `The order was NOT created: the merchant has NO recorded shipping rate for the customer's governorate (${shippingMatch.addressGovernorate}). The recorded zones are: ${zoneNames.join("، ")}. Never use another zone's price or delivery time for this address, and never invent one. Tell the customer in Egyptian Arabic that you are checking the shipping cost/time for their area and will confirm, and report it through request_info as a missing shipping fact. Do not say the order is confirmed.`
+                    ? `The order was NOT created: the store's registered shipping areas do NOT include the customer's governorate (${shippingMatch.addressGovernorate ?? resolvedGovernorate ?? "غير محددة"}). The registered areas are the complete recorded set: ${zoneNames.join("، ")}. This is a recorded fact, so the absence IS the answer: do NOT promise to check, do NOT say you will get back to them, and do NOT report this through request_info — nothing is missing from the owner. Tell the customer plainly and politely in Egyptian Arabic that shipping to their governorate is not available right now, name the areas the store does deliver to, and ask whether they have a delivery address inside one of those areas. If they give one, call create_order again with it. Never use another area's price or delivery time, never invent one, and never say the order is confirmed.`
                     : "The order was NOT created because the shipping zone could not be inferred from the address or from anything the customer said. Ask the customer in Egyptian Arabic which zone from the list they belong to, then call create_order again. Never guess a zone, and do not say anything about confirming the order.",
+
                 },
                 createdOrderNumber: null,
               };
